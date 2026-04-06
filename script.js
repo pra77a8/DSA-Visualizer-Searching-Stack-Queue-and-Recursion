@@ -16,17 +16,24 @@ const CONFIG = {
 // ----- State -----
 let array = [];        // Current array of values
 let isSearching = false; // Prevents multiple simultaneous searches
+let isPaused = false;
+let pauseResolver = null;
 
 // ----- DOM References -----
 const barContainer  = document.getElementById('bar-container');
 const arraySizeInput = document.getElementById('array-size-input');
 const arrayInput    = document.getElementById('array-input');
 const elementInput  = document.getElementById('element-input');
+const algorithmSelect = document.getElementById('algorithm-select');
+const intervalInput = document.getElementById('interval-input');
+const intervalValue = document.getElementById('interval-value');
 const targetInput   = document.getElementById('target-input');
 const statusText    = document.getElementById('status-text');
+const explanationText = document.getElementById('explanation-text');
 const stepsCount    = document.getElementById('steps-count');
 const arraySizeEl   = document.getElementById('array-size');
 const btnSearch     = document.getElementById('btn-search');
+const btnPause      = document.getElementById('btn-pause');
 const btnReset      = document.getElementById('btn-reset');
 const btnGenerate   = document.getElementById('btn-generate');
 const btnApplySize  = document.getElementById('btn-apply-size');
@@ -49,6 +56,7 @@ function generateArray() {
 
   renderBars();
   updateStatus('Ready', 'default');
+  setExplanation('New random array generated. Start search to see each step explanation.');
   updateSteps(0);
   arraySizeEl.textContent = array.length;
   arraySizeInput.value = array.length;
@@ -75,6 +83,7 @@ function updateArraySize() {
   CONFIG.arraySize = nextSize;
   generateArray();
   updateStatus(`Generated new array of size ${nextSize}`, 'default');
+  setExplanation(`Array size changed to ${nextSize} and a new random array was generated.`);
 }
 
 // ============================================
@@ -112,6 +121,7 @@ function renderBars() {
   });
 
   arraySizeEl.textContent = array.length;
+  arrayInput.value = array.join(', ');
 }
 
 function applyCustomArray() {
@@ -145,6 +155,7 @@ function applyCustomArray() {
   resetBarColors();
   updateSteps(0);
   updateStatus('Custom array applied', 'default');
+  setExplanation('Custom array applied. Use search controls to run linear or binary search.');
   arraySizeInput.value = array.length;
   targetInput.value = '';
   elementInput.value = '';
@@ -172,9 +183,22 @@ function addArrayElement() {
   resetBarColors();
   updateSteps(0);
   updateStatus(`Added element ${value}`, 'default');
+  setExplanation(`Element ${value} was appended to the array.`);
   arraySizeInput.value = array.length;
   arrayInput.value = array.join(', ');
   elementInput.value = '';
+}
+
+function startSearch() {
+  const algorithm = algorithmSelect.value;
+  if (algorithm === 'binary') {
+    setExplanation('Binary Search selected. It checks the middle element and discards half each step.');
+    startBinarySearch();
+    return;
+  }
+
+  setExplanation('Linear Search selected. It checks each element one by one from left to right.');
+  startLinearSearch();
 }
 
 // ============================================
@@ -184,27 +208,19 @@ function addArrayElement() {
 async function startLinearSearch() {
   if (isSearching) return;
 
-  const rawValue = targetInput.value.trim();
-
-  // --- Input Validation ---
-  if (rawValue === '') {
-    flashInput('Please enter a target value.');
-    return;
-  }
-
-  const target = parseInt(rawValue, 10);
-
-  if (isNaN(target) || target < CONFIG.minValue || target > CONFIG.maxValue) {
-    flashInput(`Value must be between ${CONFIG.minValue} and ${CONFIG.maxValue}.`);
+  const target = readAndValidateTarget();
+  if (target === null) {
     return;
   }
 
   // --- Begin Search ---
   isSearching = true;
-  setButtonsDisabled(true);
+  isPaused = false;
+  disableControls();
   resetBarColors();
   updateSteps(0);
   updateStatus(`Searching for ${target}...`, 'searching');
+  setExplanation(`Linear Search started for target ${target}.`);
 
   const bars = barContainer.querySelectorAll('.bar');
   let found = false;
@@ -217,33 +233,234 @@ async function startLinearSearch() {
       bar.classList.add('current');
       updateSteps(i + 1);
       updateStatus(`Checking index ${i} (value ${value})`, 'searching');
+      setExplanation(`Step ${i + 1}: comparing target ${target} with value ${value} at index ${i}.`);
 
-      await sleep(350);
+      await sleepWithPause(getPrimaryDelay());
 
       if (value === target) {
         bar.classList.remove('current');
         bar.classList.add('found');
         updateStatus(`Found ${target} at index ${i}`, 'found');
+        setExplanation(`Match found. Target ${target} equals value at index ${i}.`);
         found = true;
         break;
       }
 
       bar.classList.remove('current');
       bar.classList.add('searched');
-      await sleep(220);
+      setExplanation(`No match at index ${i}. Move to the next element.`);
+      await sleepWithPause(getSecondaryDelay());
     }
 
     if (!found) {
       updateStatus(`${target} not found in array`, 'notfound');
+      setExplanation(`Linear Search complete. Target ${target} is not present in the array.`);
     }
   } finally {
     isSearching = false;
-    setButtonsDisabled(false);
+    isPaused = false;
+    enableControls();
+  }
+}
+
+async function startBinarySearch() {
+  if (isSearching) return;
+
+  const target = readAndValidateTarget();
+  if (target === null) {
+    return;
+  }
+
+  isSearching = true;
+  isPaused = false;
+  disableControls();
+  resetBarColors();
+  updateSteps(0);
+  setExplanation(`Binary Search started for target ${target}.`);
+
+  try {
+    if (!isArraySortedAscending(array)) {
+      updateStatus('Array not sorted. Auto-sorting for Binary Search...', 'searching');
+      setExplanation('Binary Search requires sorted data, so the array is being auto-sorted first.');
+      await sleepWithPause(getSecondaryDelay());
+      array.sort((a, b) => a - b);
+      renderBars();
+      updateStatus('Array sorted. Starting Binary Search...', 'searching');
+      setExplanation('Array sorted in ascending order. Binary Search will now begin.');
+      await sleepWithPause(getSecondaryDelay());
+    }
+
+    const bars = barContainer.querySelectorAll('.bar');
+    let left = 0;
+    let right = array.length - 1;
+    let step = 0;
+    let found = false;
+
+    while (left <= right) {
+      step += 1;
+      updateSteps(step);
+
+      const mid = Math.floor((left + right) / 2);
+      const midValue = array[mid];
+
+      applyBinaryState(bars, left, right, mid);
+      updateStatus(`Checking mid index ${mid} (value ${midValue})`, 'searching');
+      setExplanation(`Step ${step}: current range is [${left}, ${right}], mid is ${mid} with value ${midValue}.`);
+      await sleepWithPause(getPrimaryDelay());
+
+      if (midValue === target) {
+        bars[mid].classList.remove('mid');
+        bars[mid].classList.add('found');
+        updateStatus(`Target found at index ${mid}`, 'found');
+        setExplanation(`Match found at mid index ${mid}. Binary Search stops here.`);
+        found = true;
+        break;
+      }
+
+      if (target < midValue) {
+        updateStatus('Target is smaller than mid. Discarding right half.', 'searching');
+        setExplanation(`Target ${target} is smaller than ${midValue}, so search continues in left half.`);
+        for (let i = mid; i <= right; i++) {
+          bars[i].classList.add('discarded');
+        }
+        right = mid - 1;
+      } else {
+        updateStatus('Target is greater than mid. Discarding left half.', 'searching');
+        setExplanation(`Target ${target} is greater than ${midValue}, so search continues in right half.`);
+        for (let i = left; i <= mid; i++) {
+          bars[i].classList.add('discarded');
+        }
+        left = mid + 1;
+      }
+
+      await sleepWithPause(getSecondaryDelay());
+    }
+
+    if (!found) {
+      updateStatus('Element not found', 'notfound');
+      setExplanation(`Binary Search complete. Target ${target} is not present in the array.`);
+    }
+  } finally {
+    isSearching = false;
+    isPaused = false;
+    enableControls();
   }
 }
 
 function sleep(ms) {
   return new Promise(resolve => setTimeout(resolve, ms));
+}
+
+function waitIfPaused() {
+  if (!isPaused) {
+    return Promise.resolve();
+  }
+
+  return new Promise(resolve => {
+    pauseResolver = resolve;
+  });
+}
+
+async function sleepWithPause(ms) {
+  let elapsed = 0;
+  const chunk = 50;
+
+  while (elapsed < ms) {
+    await waitIfPaused();
+    const next = Math.min(chunk, ms - elapsed);
+    await sleep(next);
+    elapsed += next;
+  }
+
+  await waitIfPaused();
+}
+
+function updatePauseButton() {
+  btnPause.disabled = !isSearching;
+  btnPause.textContent = isPaused ? 'Resume' : 'Pause';
+  btnPause.setAttribute('aria-label', isPaused ? 'Resume search' : 'Pause search');
+}
+
+function togglePauseSearch() {
+  if (!isSearching) {
+    return;
+  }
+
+  isPaused = !isPaused;
+  if (isPaused) {
+    updateStatus('Paused', 'searching');
+    setExplanation('Search paused. Tap Resume or press Enter to continue.');
+  } else if (pauseResolver) {
+    pauseResolver();
+    pauseResolver = null;
+  }
+
+  updatePauseButton();
+}
+
+function getIntervalDelay() {
+  return Math.round(Number(intervalInput.value) * 1000);
+}
+
+function getPrimaryDelay() {
+  return getIntervalDelay();
+}
+
+function getSecondaryDelay() {
+  return Math.max(140, Math.floor(getIntervalDelay() * 0.65));
+}
+
+function setExplanation(message) {
+  explanationText.textContent = message;
+}
+
+function updateIntervalDisplay() {
+  intervalValue.textContent = `${Number(intervalInput.value).toFixed(1)} s`;
+}
+
+function isArraySortedAscending(values) {
+  for (let i = 1; i < values.length; i++) {
+    if (values[i] < values[i - 1]) {
+      return false;
+    }
+  }
+  return true;
+}
+
+function applyBinaryState(bars, left, right, mid) {
+  bars.forEach((bar, index) => {
+    bar.classList.remove('current', 'found', 'searched', 'mid', 'in-range', 'discarded');
+
+    if (index < left || index > right) {
+      bar.classList.add('discarded');
+      return;
+    }
+
+    bar.classList.add('in-range');
+  });
+
+  if (bars[mid]) {
+    bars[mid].classList.remove('in-range');
+    bars[mid].classList.add('mid');
+  }
+}
+
+function readAndValidateTarget() {
+  const rawValue = targetInput.value.trim();
+
+  if (rawValue === '') {
+    flashInput('Please enter a target value.');
+    return null;
+  }
+
+  const target = parseInt(rawValue, 10);
+
+  if (isNaN(target) || target < CONFIG.minValue || target > CONFIG.maxValue) {
+    flashInput(`Value must be between ${CONFIG.minValue} and ${CONFIG.maxValue}.`);
+    return null;
+  }
+
+  return target;
 }
 
 // ============================================
@@ -256,6 +473,7 @@ function resetArray() {
   resetBarColors();
   updateStatus('Ready', 'default');
   updateSteps(0);
+  setExplanation('Visualization reset. Colors and step count cleared.');
   targetInput.value = '';
 }
 
@@ -266,7 +484,7 @@ function resetArray() {
 function resetBarColors() {
   const bars = barContainer.querySelectorAll('.bar');
   bars.forEach(bar => {
-    bar.classList.remove('current', 'found', 'searched');
+    bar.classList.remove('current', 'found', 'searched', 'mid', 'in-range', 'discarded');
   });
 }
 
@@ -280,7 +498,7 @@ function updateStatus(message, type = 'default') {
   // Color-code based on type
   const colorMap = {
     default:    'var(--accent-blue)',
-    searching:  'var(--accent-orange)',
+    searching:  'var(--accent-yellow)',
     found:      'var(--accent-green)',
     notfound:   'var(--accent-red)',
   };
@@ -307,6 +525,18 @@ function setButtonsDisabled(disabled) {
   btnApplySize.disabled = disabled;
   btnApplyArray.disabled = disabled;
   btnAddElement.disabled = disabled;
+  algorithmSelect.disabled = disabled;
+  intervalInput.disabled = disabled;
+}
+
+function disableControls() {
+  setButtonsDisabled(true);
+  updatePauseButton();
+}
+
+function enableControls() {
+  setButtonsDisabled(false);
+  updatePauseButton();
 }
 
 // ============================================
@@ -348,5 +578,15 @@ document.addEventListener('DOMContentLoaded', () => {
   arraySizeInput.min = String(CONFIG.minArraySize);
   arraySizeInput.max = String(CONFIG.maxArraySize);
   arraySizeInput.value = CONFIG.arraySize;
+  intervalInput.addEventListener('input', updateIntervalDisplay);
+  document.addEventListener('keydown', event => {
+    if (event.key === 'Enter' && isSearching) {
+      event.preventDefault();
+      togglePauseSearch();
+    }
+  });
+  updateIntervalDisplay();
+  updatePauseButton();
+  setExplanation('Choose an algorithm, enter a target value, and start search to see step-by-step explanation here.');
   generateArray();
 });
