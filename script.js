@@ -18,6 +18,10 @@ let array = [];        // Current array of values
 let isSearching = false; // Prevents multiple simultaneous searches
 let isPaused = false;
 let pauseResolver = null;
+let stack = [];
+let isStackAnimating = false;
+let isStackPaused = false;
+let stackPauseResolver = null;
 
 // ----- DOM References -----
 const barContainer  = document.getElementById('bar-container');
@@ -39,6 +43,25 @@ const btnGenerate   = document.getElementById('btn-generate');
 const btnApplySize  = document.getElementById('btn-apply-size');
 const btnApplyArray = document.getElementById('btn-apply-array');
 const btnAddElement = document.getElementById('btn-add-element');
+const stackInput = document.getElementById('stack-input');
+const stackContainer = document.getElementById('stack-container');
+const stackCount = document.getElementById('stack-count');
+const stackStatus = document.getElementById('stack-status');
+const stackExplanation = document.getElementById('stack-explanation');
+const btnStackPush = document.getElementById('btn-stack-push');
+const btnStackPop = document.getElementById('btn-stack-pop');
+const btnStackReset = document.getElementById('btn-stack-reset');
+const btnStackRandom = document.getElementById('btn-stack-random');
+const btnStackDemo = document.getElementById('btn-stack-demo');
+const stackIntervalInput = document.getElementById('stack-interval-input');
+const stackIntervalValue = document.getElementById('stack-interval-value');
+const stackChatPanel = document.getElementById('stack-chat-panel');
+const stackChatLog = document.getElementById('stack-chat-log');
+const stackChatScroll = document.getElementById('stack-chat-scroll');
+const navItems = document.querySelectorAll('.nav-item');
+const modules = document.querySelectorAll('.module');
+
+const ACTIVE_MODULE_STORAGE_KEY = 'dsa-visualizer-active-module';
 
 // ============================================
 //   generateArray()
@@ -199,6 +222,284 @@ function startSearch() {
 
   setExplanation('Linear Search selected. It checks each element one by one from left to right.');
   startLinearSearch();
+}
+
+function switchModule(moduleId) {
+  if (isSearching) {
+    return;
+  }
+
+  modules.forEach(module => {
+    module.classList.toggle('active-module', module.id === moduleId);
+  });
+
+  navItems.forEach(item => {
+    item.classList.toggle('active', item.dataset.moduleTarget === moduleId);
+  });
+
+  window.localStorage.setItem(ACTIVE_MODULE_STORAGE_KEY, moduleId);
+}
+
+function renderStack(enteringIndex = null, removingIndex = null) {
+  stackContainer.innerHTML = '';
+
+  for (let index = stack.length - 1; index >= 0; index--) {
+    const item = document.createElement('div');
+    item.className = 'stack-block';
+    if (index === stack.length - 1) {
+      item.classList.add('top-block');
+    }
+    if (index === enteringIndex) {
+      item.classList.add('entering');
+    }
+    if (index === removingIndex) {
+      item.classList.add('removing');
+    }
+
+    const value = document.createElement('span');
+    value.className = 'stack-value';
+    value.textContent = stack[index];
+
+    const label = document.createElement('span');
+    label.className = 'stack-index';
+    label.textContent = index === stack.length - 1 ? 'TOP' : `Index ${index}`;
+
+    item.appendChild(value);
+    item.appendChild(label);
+    stackContainer.appendChild(item);
+  }
+
+  stackCount.textContent = stack.length;
+}
+
+function updateStackStatus(message) {
+  stackStatus.textContent = message;
+}
+
+function setStackExplanation(message) {
+  stackExplanation.textContent = message;
+}
+
+function setStackChat(message) {
+  const bubble = document.createElement('div');
+  bubble.className = 'stack-chat-bubble';
+
+  const label = document.createElement('span');
+  label.className = 'stack-chat-label';
+  label.textContent = 'Assistant';
+
+  const text = document.createElement('p');
+  text.textContent = message;
+
+  bubble.appendChild(label);
+  bubble.appendChild(text);
+  stackChatLog.appendChild(bubble);
+
+  if (stackChatLog.children.length > 80) {
+    stackChatLog.removeChild(stackChatLog.firstChild);
+  }
+
+  scrollStackChatToLatest();
+}
+
+function clearStackChatLog() {
+  stackChatLog.innerHTML = '';
+}
+
+function scrollStackChatToLatest() {
+  stackChatLog.scrollTop = stackChatLog.scrollHeight;
+}
+
+function showStackChatPanel() {
+  stackChatPanel.classList.remove('is-hidden');
+}
+
+function setStackButtonsDisabled(disabled) {
+  btnStackPush.disabled = disabled;
+  btnStackPop.disabled = disabled;
+  btnStackReset.disabled = disabled;
+  btnStackRandom.disabled = disabled;
+  btnStackDemo.disabled = disabled;
+  stackIntervalInput.disabled = disabled;
+  stackInput.disabled = disabled;
+}
+
+function disableStackControls() {
+  isStackAnimating = true;
+  isStackPaused = false;
+  setStackButtonsDisabled(true);
+}
+
+function enableStackControls() {
+  isStackAnimating = false;
+  isStackPaused = false;
+  stackPauseResolver = null;
+  setStackButtonsDisabled(false);
+}
+
+async function pushElement() {
+  if (isStackAnimating) return;
+
+  const rawValue = stackInput.value.trim();
+  if (rawValue === '') {
+    updateStackStatus('Enter a value to push');
+    setStackExplanation('Push needs a value. Type one in the input before pushing.');
+    return;
+  }
+
+  const value = Number(rawValue);
+  if (!Number.isFinite(value)) {
+    updateStackStatus('Enter a valid number');
+    setStackExplanation('Stack accepts numeric values for this visualizer.');
+    return;
+  }
+
+  disableStackControls();
+  stack.push(value);
+  updateStackStatus(`Pushed ${value}`);
+  setStackExplanation(`Value ${value} was added to the top of the stack.`);
+  renderStack(stack.length - 1);
+  stackInput.value = '';
+  await sleep(650);
+  renderStack();
+  enableStackControls();
+}
+
+async function popElement() {
+  if (isStackAnimating) return;
+
+  if (stack.length === 0) {
+    updateStackStatus('Stack is empty');
+    setStackExplanation('Nothing to pop because the stack has no elements.');
+    return;
+  }
+
+  disableStackControls();
+  const topIndex = stack.length - 1;
+  const poppedValue = stack[topIndex];
+  updateStackStatus(`Popped ${poppedValue}`);
+  setStackExplanation(`Removing the top element ${poppedValue} from the stack.`);
+  renderStack(null, topIndex);
+  await sleep(650);
+  stack.pop();
+  renderStack();
+  enableStackControls();
+}
+
+function resetStack() {
+  if (isStackAnimating) return;
+
+  stack = [];
+  renderStack();
+  stackInput.value = '';
+  updateStackStatus('Ready');
+  setStackExplanation('Stack cleared. You can push elements again.');
+  clearStackChatLog();
+  setStackChat('Stack cleared. Random stack ready when you want to demo LIFO again.');
+}
+
+function togglePauseStackDemo() {
+  if (!isStackAnimating) {
+    return;
+  }
+
+  isStackPaused = !isStackPaused;
+  if (isStackPaused) {
+    updateStackStatus('Paused');
+    setStackExplanation('Stack demo paused. Press Enter to resume.');
+    setStackChat('Demo paused. Press Enter again to continue.');
+  } else if (stackPauseResolver) {
+    stackPauseResolver();
+    stackPauseResolver = null;
+    updateStackStatus('LIFO demo running');
+    setStackExplanation('Stack demo resumed. LIFO steps continue from current top element.');
+    setStackChat('Demo resumed. Continuing with the current top element.');
+  }
+}
+
+function generateRandomStack() {
+  if (isStackAnimating) return;
+
+  const nextSize = randomInt(3, 6);
+  stack = [];
+
+  for (let index = 0; index < nextSize; index++) {
+    stack.push(randomInt(10, 99));
+  }
+
+  renderStack();
+  stackInput.value = '';
+  updateStackStatus('Random stack generated');
+  setStackExplanation('A random stack has been created. The top element is the most recent one added.');
+  setStackChat(`Random stack generated with ${nextSize} elements. The top block is the newest item.`);
+}
+
+async function animateLifoDemo() {
+  if (isStackAnimating) return;
+
+  showStackChatPanel();
+
+  if (stack.length === 0) {
+    generateRandomStack();
+  }
+
+  disableStackControls();
+  updateStackStatus('LIFO demo running');
+  setStackExplanation('LIFO means Last In, First Out. The newest element is removed first.');
+  setStackChat('Demo started. Watch the top item leave first, then the next one below it.');
+  await sleepWithStackPause(getStackIntervalDelay());
+
+  while (stack.length > 0) {
+    const topIndex = stack.length - 1;
+    const value = stack[topIndex];
+    updateStackStatus(`Removing ${value}`);
+    setStackExplanation(`Value ${value} was the last pushed element, so it leaves the stack first.`);
+    setStackChat(`Step: ${value} is on top, so it is removed now.`);
+    renderStack(null, topIndex);
+    await sleepWithStackPause(getStackIntervalDelay());
+    stack.pop();
+    renderStack();
+    if (stack.length > 0) {
+      setStackChat(`Next up is ${stack[stack.length - 1]}. This is the next top element.`);
+    }
+    await sleepWithStackPause(Math.max(180, Math.floor(getStackIntervalDelay() * 0.35)));
+  }
+
+  updateStackStatus('Demo complete');
+  setStackExplanation('The stack is empty now. That is how LIFO works: last in, first out.');
+  setStackChat('Demo finished. The last item entered was removed first, which is exactly LIFO.');
+  enableStackControls();
+}
+
+function getStackIntervalDelay() {
+  return Math.round(Number(stackIntervalInput.value) * 1000);
+}
+
+function updateStackIntervalDisplay() {
+  stackIntervalValue.textContent = `${Number(stackIntervalInput.value).toFixed(1)} s`;
+}
+
+async function sleepWithStackPause(ms) {
+  let elapsed = 0;
+  const chunk = 50;
+
+  while (elapsed < ms) {
+    if (isStackPaused) {
+      await new Promise(resolve => {
+        stackPauseResolver = resolve;
+      });
+    }
+
+    const next = Math.min(chunk, ms - elapsed);
+    await sleep(next);
+    elapsed += next;
+  }
+
+  if (isStackPaused) {
+    await new Promise(resolve => {
+      stackPauseResolver = resolve;
+    });
+  }
 }
 
 // ============================================
@@ -575,18 +876,44 @@ function mapRange(value, inMin, inMax, outMin, outMax) {
 //   Init — Auto-generate array on page load
 // ============================================
 document.addEventListener('DOMContentLoaded', () => {
+  navItems.forEach(item => {
+    item.addEventListener('click', () => switchModule(item.dataset.moduleTarget));
+  });
+
+  stackChatScroll.addEventListener('click', scrollStackChatToLatest);
+
   arraySizeInput.min = String(CONFIG.minArraySize);
   arraySizeInput.max = String(CONFIG.maxArraySize);
   arraySizeInput.value = CONFIG.arraySize;
   intervalInput.addEventListener('input', updateIntervalDisplay);
   document.addEventListener('keydown', event => {
-    if (event.key === 'Enter' && isSearching) {
+    if (event.key !== 'Enter') {
+      return;
+    }
+
+    if (isSearching) {
       event.preventDefault();
       togglePauseSearch();
+      return;
+    }
+
+    if (isStackAnimating) {
+      event.preventDefault();
+      togglePauseStackDemo();
     }
   });
   updateIntervalDisplay();
   updatePauseButton();
+  stackIntervalInput.addEventListener('input', updateStackIntervalDisplay);
+  updateStackIntervalDisplay();
+  generateRandomStack();
+  renderStack();
+  updateStackStatus('Ready');
+  setStackExplanation('Stack follows LIFO: the last pushed element is removed first.');
+  clearStackChatLog();
+  setStackChat('Random stack ready. Use LIFO Demo to see the removal order explained step by step.');
   setExplanation('Choose an algorithm, enter a target value, and start search to see step-by-step explanation here.');
+  const initialModule = window.localStorage.getItem(ACTIVE_MODULE_STORAGE_KEY) || 'searching-module';
+  switchModule(initialModule);
   generateArray();
 });
